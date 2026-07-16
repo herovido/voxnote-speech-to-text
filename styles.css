@@ -107,6 +107,9 @@ h1 em { color: var(--primary); font-style: normal; }
 .insight-list span:nth-child(2) { display: flex; flex-direction: column; }
 .insight-list strong { font-size: 12px; }
 .insight-list small { color: var(--muted-ink); font-size: 10px; }
+.decision-block { margin-top: 20px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.decision-block ul { margin: 10px 0 0; padding-left: 18px; color: #4f5e73; font-size: 11px; }
+.decision-block li + li { margin-top: 8px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot-green { background: #20b39f; }.dot-amber { background: #f0a43a; }.dot-blue { background: #5b7ae7; }
 .transcript-panel { min-width: 0; }
@@ -144,6 +147,8 @@ h1 em { color: var(--primary); font-style: normal; }
 .task-item input:checked + label { opacity: .55; text-decoration: line-through; }
 .task-priority { padding: 5px 8px; border-radius: 99px; color: #a34731; background: #fff0eb; font-size: 9px; font-weight: 700; }
 .task-priority.medium { color: #786111; background: #fff8db; }
+.task-priority.low { color: #246b54; background: #e8f7f0; }
+.empty-state { margin: 0; padding: 28px 12px; color: var(--muted-ink); font-size: 12px; text-align: center; }
 .features { text-align: center; }
 .section-intro { max-width: 680px; margin: auto; }
 .section-intro h2, .workflow h2, .security h2 { margin: 8px 0 14px; font-size: clamp(32px, 4vw, 48px); line-height: 1.15; letter-spacing: -.045em; }

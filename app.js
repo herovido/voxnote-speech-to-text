@@ -11,7 +11,7 @@ const progressBar = document.querySelector('#progress-bar');
 const progressLabel = progressWrap.querySelector('.progress-copy span');
 const workspace = document.querySelector('#workspace');
 const toast = document.querySelector('#toast');
-const maxFileSize = 2 * 1024 * 1024 * 1024;
+const maxFileSize = 500 * 1024 * 1024;
 const allowedExtensions = ['mp3', 'wav', 'm4a', 'mp4', 'mov', 'webm', 'ogg'];
 let currentFile = null;
 let toastTimer;
@@ -246,11 +246,83 @@ function formatTimestamp(totalSeconds) {
   return `${minutes}:${seconds}`;
 }
 
+function bindTaskCheckboxes() {
+  document.querySelectorAll('.task-item input').forEach((checkbox) => {
+    try { checkbox.checked = localStorage.getItem(`voxnote-${checkbox.id}`) === 'done'; } catch (error) { /* Continue without persistence. */ }
+    checkbox.addEventListener('change', () => {
+      try { localStorage.setItem(`voxnote-${checkbox.id}`, checkbox.checked ? 'done' : 'open'); } catch (error) { /* Continue without persistence. */ }
+      showToast(checkbox.checked ? 'Đã đánh dấu công việc hoàn thành.' : 'Đã mở lại công việc.');
+    });
+  });
+}
+
+function renderDecisions(decisions) {
+  const list = document.querySelector('#decisions-list');
+  list.replaceChildren();
+  if (!decisions.length) {
+    const item = document.createElement('li');
+    item.textContent = 'Không phát hiện quyết định rõ ràng.';
+    list.append(item);
+    return;
+  }
+  decisions.forEach((decision) => {
+    const item = document.createElement('li');
+    item.textContent = decision;
+    list.append(item);
+  });
+}
+
+function renderTasks(tasks) {
+  const panel = document.querySelector('#tasks-panel');
+  panel.replaceChildren();
+  if (!tasks.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Không phát hiện công việc cần theo dõi.';
+    panel.append(empty);
+    return;
+  }
+
+  const priorityLabels = { high: 'Ưu tiên cao', medium: 'Trung bình', low: 'Ưu tiên thấp' };
+  tasks.forEach((task, index) => {
+    const id = `result-task-${index + 1}`;
+    const row = document.createElement('div');
+    row.className = 'task-item';
+    const checkbox = document.createElement('input');
+    checkbox.id = id;
+    checkbox.type = 'checkbox';
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    const title = document.createElement('strong');
+    title.textContent = task.text || 'Công việc chưa đặt tên';
+    const meta = document.createElement('span');
+    meta.textContent = `${task.assignee || 'Chưa rõ'} · ${task.due || 'Chưa rõ'}`;
+    label.append(title, meta);
+    const priority = document.createElement('span');
+    const level = ['high', 'medium', 'low'].includes(task.priority) ? task.priority : 'medium';
+    priority.className = `task-priority${level === 'high' ? '' : ` ${level}`}`;
+    priority.textContent = priorityLabels[level];
+    row.append(checkbox, label, priority);
+    panel.append(row);
+  });
+  bindTaskCheckboxes();
+}
+
 function renderJobResult(result) {
   if (!result) return;
   document.querySelector('#meeting-title').textContent = result.title || currentFile.name;
   document.querySelector('#summary-text').textContent = result.summary || 'Chưa có tóm tắt.';
   document.querySelector('#speaker-count').textContent = `${result.speaker_count || 0} người nói`;
+  document.querySelector('#speaker-status').textContent = (result.speaker_count || 0) > 1 ? 'Đã tách người nói' : 'Một kênh giọng nói';
+  document.querySelector('#audio-duration').textContent = `00:00 / ${formatTimestamp(result.duration_seconds || 0)}`;
+
+  const decisions = Array.isArray(result.decisions) ? result.decisions : [];
+  const tasks = Array.isArray(result.action_items) ? result.action_items : [];
+  document.querySelector('#decision-count').textContent = `${decisions.length} quyết định`;
+  document.querySelector('#task-count').textContent = `${tasks.length} công việc`;
+  document.querySelector('#task-tab-count').textContent = String(tasks.length);
+  renderDecisions(decisions);
+  renderTasks(tasks);
 
   const speakerMap = new Map((result.speakers || []).map((speaker) => [speaker.id, speaker]));
   const transcriptPanel = document.querySelector('#transcript-panel');
@@ -299,6 +371,7 @@ function renderJobResult(result) {
 
 bindSpeakerButtons();
 applySavedSpeakerNames();
+bindTaskCheckboxes();
 
 cancelRename.addEventListener('click', () => renameDialog.close());
 renameForm.addEventListener('submit', (event) => {
@@ -325,14 +398,6 @@ playButton.addEventListener('click', () => {
   showToast(playing ? 'Đang phát bản ghi mẫu.' : 'Đã tạm dừng.');
 });
 
-document.querySelectorAll('.task-item input').forEach((checkbox) => {
-  try { checkbox.checked = localStorage.getItem(`voxnote-${checkbox.id}`) === 'done'; } catch (error) { /* Continue without persistence. */ }
-  checkbox.addEventListener('change', () => {
-    try { localStorage.setItem(`voxnote-${checkbox.id}`, checkbox.checked ? 'done' : 'open'); } catch (error) { /* Continue without persistence. */ }
-    showToast(checkbox.checked ? 'Đã đánh dấu công việc hoàn thành.' : 'Đã mở lại công việc.');
-  });
-});
-
 document.querySelector('#export-button').addEventListener('click', () => {
   const lines = utterances.map((utterance) => {
     const speaker = utterance.querySelector('[data-speaker-name]').textContent;
@@ -340,7 +405,7 @@ document.querySelector('#export-button').addEventListener('click', () => {
     const text = utterance.querySelector('p').dataset.original;
     return `[${time}] ${speaker}: ${text}`;
   });
-  const header = 'VoxNote — Cuộc họp tuần, Nhóm sản phẩm\n\n';
+  const header = `VoxNote — ${document.querySelector('#meeting-title').textContent}\n\n`;
   const blob = new Blob([header + lines.join('\n\n')], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +16,7 @@ class JobStore:
         self._jobs: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
 
-    def create(self, job_id: str, original_name: str, stored_path: Path) -> dict[str, Any]:
+    def create(self, job_id: str, original_name: str, stored_path: Path, mode: str) -> dict[str, Any]:
         job = {
             "id": job_id,
             "status": "queued",
@@ -25,7 +24,7 @@ class JobStore:
             "stage": "Đã nhận file, đang xếp hàng…",
             "original_name": original_name,
             "created_at": datetime.now(UTC).isoformat(),
-            "mode": "demo",
+            "mode": mode,
             "result": None,
             "error": None,
             "_stored_path": str(stored_path),
@@ -66,7 +65,6 @@ def process_job(job_id: str, store: JobStore, transcriber: Transcriber) -> None:
 
     def report(progress: int, stage: str) -> None:
         store.update(job_id, status="processing", progress=progress, stage=stage)
-        time.sleep(0.35)
 
     try:
         report(18, "Đang kiểm tra và chuẩn hóa file…")

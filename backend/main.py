@@ -34,7 +34,7 @@ app.add_middleware(
 )
 
 store = JobStore()
-transcriber = create_transcriber(os.getenv("TRANSCRIPTION_PROVIDER", "demo"))
+transcriber = create_transcriber(os.getenv("TRANSCRIPTION_PROVIDER", "local"), PROJECT_ROOT)
 
 
 def safe_extension(filename: str) -> str:
@@ -52,7 +52,7 @@ def clean_display_name(filename: str) -> str:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "provider": os.getenv("TRANSCRIPTION_PROVIDER", "demo")}
+    return {"status": "ok", **transcriber.describe()}
 
 
 @app.post("/api/jobs", status_code=202)
@@ -83,7 +83,7 @@ async def create_job(background_tasks: BackgroundTasks, file: UploadFile = File(
         stored_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="File tải lên đang trống.")
 
-    job = store.create(job_id, original_name, stored_path)
+    job = store.create(job_id, original_name, stored_path, mode=transcriber.mode)
     background_tasks.add_task(process_job, job_id, store, transcriber)
     return job
 

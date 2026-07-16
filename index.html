@@ -35,10 +35,10 @@
       <div class="hero-copy">
         <div class="eyebrow"><span></span> Trợ lý cuộc họp thông minh</div>
         <h1>Đừng chỉ ghi âm.<br /><em>Hãy ghi lại điều quan trọng.</em></h1>
-        <p class="hero-lead">Tải lên audio hoặc video, nhận bản ghi theo từng người nói và biến cuộc hội thoại thành quyết định rõ ràng.</p>
+        <p class="hero-lead">Tải lên audio hoặc video, nhận bản ghi có mốc thời gian và biến cuộc hội thoại thành quyết định rõ ràng.</p>
         <div class="trust-row" aria-label="Các lợi ích chính">
           <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg> Tiếng Việt tối ưu</span>
-          <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg> Phân biệt người nói</span>
+          <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg> Local AI</span>
           <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg> Dữ liệu riêng tư</span>
         </div>
       </div>
@@ -57,7 +57,7 @@
           <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 15v4h14v-4"/></svg></span>
           <strong>Kéo thả file vào đây</strong>
           <span>hoặc <u>chọn từ máy tính</u></span>
-          <small>MP3, WAV, M4A, MP4, MOV · Tối đa 2 GB</small>
+          <small>MP3, WAV, M4A, MP4, MOV, WEBM, OGG · Tối đa 500 MB</small>
         </label>
 
         <div class="selected-file" id="selected-file" hidden>
@@ -74,7 +74,7 @@
           <div class="progress-copy"><span>Đang phân tích người nói…</span><strong id="progress-value">0%</strong></div>
           <div class="progress-track"><span id="progress-bar"></span></div>
         </div>
-        <p class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 2.8 8.2 7 10 4.2-1.8 7-5.6 7-10V6l-7-3Z"/></svg> File của bạn không được dùng để huấn luyện mô hình.</p>
+        <p class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 2.8 8.2 7 10 4.2-1.8 7-5.6 7-10V6l-7-3Z"/></svg> Whisper và mô hình tóm tắt chạy trên máy này; nội dung không được gửi tới dịch vụ AI bên ngoài.</p>
       </div>
     </section>
 
@@ -90,23 +90,24 @@
             <div class="waveform" aria-hidden="true">
               <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
             </div>
-            <span>12:48 / 34:20</span>
+            <span id="audio-duration">00:00 / 00:00</span>
           </div>
           <div class="summary-block">
             <span class="summary-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg></span>
-            <div><span class="step-label">Tóm tắt AI</span><p id="summary-text">Nhóm thống nhất ưu tiên thử nghiệm luồng tải file và cải thiện độ chính xác cho tiếng Việt trước khi mở rộng tính năng.</p></div>
+            <div><span class="step-label">Tóm tắt Local AI</span><p id="summary-text">Nội dung tóm tắt sẽ xuất hiện sau khi xử lý file.</p></div>
           </div>
           <div class="insight-list">
-            <div><span class="dot dot-green"></span><span><strong>2 quyết định</strong><small>Đã được thống nhất</small></span></div>
-            <div><span class="dot dot-amber"></span><span><strong>3 công việc</strong><small>Cần theo dõi</small></span></div>
-            <div><span class="dot dot-blue"></span><span><strong id="speaker-count">3 người nói</strong><small>Đã phân biệt</small></span></div>
+            <div><span class="dot dot-green"></span><span><strong id="decision-count">0 quyết định</strong><small>Phát hiện trong bản ghi</small></span></div>
+            <div><span class="dot dot-amber"></span><span><strong id="task-count">0 công việc</strong><small>Cần theo dõi</small></span></div>
+            <div><span class="dot dot-blue"></span><span><strong id="speaker-count">0 người nói</strong><small id="speaker-status">Chưa xử lý</small></span></div>
           </div>
+          <div class="decision-block"><span class="step-label">Quyết định</span><ul id="decisions-list"><li>Chưa có dữ liệu.</li></ul></div>
         </aside>
         <article class="transcript-panel">
           <div class="transcript-tools">
             <div class="tabs" role="tablist" aria-label="Nội dung cuộc họp">
               <button class="tab active" id="transcript-tab" data-panel="transcript-panel" type="button" role="tab" aria-controls="transcript-panel" aria-selected="true">Bản ghi</button>
-              <button class="tab" id="tasks-tab" data-panel="tasks-panel" type="button" role="tab" aria-controls="tasks-panel" aria-selected="false">Công việc <span>3</span></button>
+              <button class="tab" id="tasks-tab" data-panel="tasks-panel" type="button" role="tab" aria-controls="tasks-panel" aria-selected="false">Công việc <span id="task-tab-count">0</span></button>
             </div>
             <button class="icon-button" id="search-button" type="button" aria-label="Tìm trong bản ghi" aria-expanded="false"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg></button>
           </div>
@@ -130,9 +131,7 @@
             </div>
           </div>
           <div class="tasks-panel" id="tasks-panel" role="tabpanel" aria-labelledby="tasks-tab" hidden>
-            <div class="task-item"><input id="task-1" type="checkbox" /><label for="task-1"><strong>Hoàn thiện luồng tải file</strong><span>Hà Anh · Hôm nay</span></label><span class="task-priority">Ưu tiên cao</span></div>
-            <div class="task-item"><input id="task-2" type="checkbox" /><label for="task-2"><strong>Kiểm thử nhận dạng tiếng Việt</strong><span>Quang Nam · Thứ sáu</span></label><span class="task-priority medium">Trung bình</span></div>
-            <div class="task-item"><input id="task-3" type="checkbox" /><label for="task-3"><strong>Chốt tiêu chí nghiệm thu MVP</strong><span>Minh Long · Tuần này</span></label><span class="task-priority medium">Trung bình</span></div>
+            <p class="empty-state">Chưa có công việc nào được phát hiện.</p>
           </div>
         </article>
       </div>
@@ -142,8 +141,8 @@
       <div class="section-intro"><span class="step-label">Từ âm thanh đến hành động</span><h2>Một nơi cho toàn bộ nội dung cuộc họp</h2><p>Không chỉ tạo văn bản. VoxNote giúp đội ngũ tìm lại ngữ cảnh và biết chính xác việc tiếp theo là gì.</p></div>
       <div class="feature-grid">
         <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 12h2l2-6 4 12 3-9 2 3h3"/></svg></span><h3>Nhận dạng chính xác</h3><p>Tối ưu cho tiếng Việt, giữ nguyên mốc thời gian và thuật ngữ quan trọng.</p></article>
-        <article><span class="feature-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2"/><path d="M3 20c0-4 2-6 6-6s6 2 6 6M15 15c3 0 5 2 5 5"/></svg></span><h3>Tách từng người nói</h3><p>Tự động phát hiện số người, gắn màu và cho phép xác nhận tên dễ dàng.</p></article>
-        <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 9h8M8 13h5M8 17h7"/></svg></span><h3>Tóm tắt có căn cứ</h3><p>Quyết định và công việc luôn liên kết về đúng đoạn hội thoại gốc.</p></article>
+        <article><span class="feature-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2"/><path d="M3 20c0-4 2-6 6-6s6 2 6 6M15 15c3 0 5 2 5 5"/></svg></span><h3>Nhận dạng ngay trên máy</h3><p>Whisper xử lý âm thanh cục bộ; bản hiện tại gom nội dung vào một người nói và giữ đầy đủ mốc thời gian.</p></article>
+        <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 9h8M8 13h5M8 17h7"/></svg></span><h3>Tóm tắt có căn cứ</h3><p>Local LLM giữ lại tên người, thời hạn, quyết định và công việc xuất hiện trong bản ghi.</p></article>
       </div>
     </section>
 
@@ -151,13 +150,13 @@
       <div class="workflow-copy"><span class="step-label">Quy trình đơn giản</span><h2>Ba bước để không bỏ lỡ điều quan trọng</h2></div>
       <ol>
         <li><span>01</span><div><strong>Tải file lên</strong><p>Chọn audio hoặc video cuộc họp từ thiết bị.</p></div></li>
-        <li><span>02</span><div><strong>Kiểm tra người nói</strong><p>Đặt tên và chỉnh sửa những đoạn cần thiết.</p></div></li>
+        <li><span>02</span><div><strong>Kiểm tra bản ghi</strong><p>Đọc lại nội dung và các mốc thời gian đã nhận dạng.</p></div></li>
         <li><span>03</span><div><strong>Chia sẻ kết quả</strong><p>Xuất bản ghi, tóm tắt và danh sách công việc.</p></div></li>
       </ol>
     </section>
 
     <section class="security" id="security">
-      <div><span class="step-label">Riêng tư từ thiết kế</span><h2>Cuộc họp thuộc về bạn.</h2><p>Mã hóa trong quá trình truyền và lưu trữ. Bạn có toàn quyền tải xuống hoặc xóa vĩnh viễn dữ liệu.</p></div>
+      <div><span class="step-label">Riêng tư từ thiết kế</span><h2>Cuộc họp thuộc về bạn.</h2><p>File, transcript và mô hình đều nằm trên máy local; nội dung không được gửi tới nhà cung cấp AI bên ngoài.</p></div>
       <svg class="security-visual" viewBox="0 0 200 160" aria-hidden="true"><path d="M100 16 35 43v45c0 35 24 60 65 75 41-15 65-40 65-75V43L100 16Z"/><rect x="75" y="72" width="50" height="42" rx="8"/><path d="M85 72V60a15 15 0 0 1 30 0v12"/></svg>
     </section>
   </main>
