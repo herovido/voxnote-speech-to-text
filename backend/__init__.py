@@ -1,0 +1,2 @@
+"""VoxNote backend package."""
+

@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Chuyển audio và video thành văn bản, phân biệt người nói và tóm tắt cuộc họp." />
+  <title>VoxNote — Biến cuộc họp thành hành động</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Bỏ qua điều hướng</a>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <a class="brand" href="#" aria-label="VoxNote, trang chủ">
+      <span class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </span>
+      <span>VoxNote</span>
+    </a>
+    <nav class="main-nav" aria-label="Điều hướng chính">
+      <a href="#features">Tính năng</a>
+      <a href="#workflow">Cách hoạt động</a>
+      <a href="#security">Bảo mật</a>
+    </nav>
+    <button class="button button-ghost" type="button">Đăng nhập</button>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow"><span></span> Trợ lý cuộc họp thông minh</div>
+        <h1>Đừng chỉ ghi âm.<br /><em>Hãy ghi lại điều quan trọng.</em></h1>
+        <p class="hero-lead">Tải lên audio hoặc video, nhận bản ghi theo từng người nói và biến cuộc hội thoại thành quyết định rõ ràng.</p>
+        <div class="trust-row" aria-label="Các lợi ích chính">
+          <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg> Tiếng Việt tối ưu</span>
+          <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg> Phân biệt người nói</span>
+          <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg> Dữ liệu riêng tư</span>
+        </div>
+      </div>
+
+      <div class="upload-card" id="upload-card">
+        <div class="card-heading">
+          <div>
+            <span class="step-label">Bắt đầu tại đây</span>
+            <h2>Tải cuộc họp lên</h2>
+          </div>
+          <span class="secure-badge"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> Mã hóa</span>
+        </div>
+
+        <label class="drop-zone" id="drop-zone" for="file-input">
+          <input id="file-input" type="file" accept="audio/*,video/*,.mp3,.wav,.m4a,.mp4,.mov" />
+          <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 15v4h14v-4"/></svg></span>
+          <strong>Kéo thả file vào đây</strong>
+          <span>hoặc <u>chọn từ máy tính</u></span>
+          <small>MP3, WAV, M4A, MP4, MOV · Tối đa 2 GB</small>
+        </label>
+
+        <div class="selected-file" id="selected-file" hidden>
+          <span class="file-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/></svg></span>
+          <span><strong id="file-name"></strong><small id="file-size"></small></span>
+          <button id="remove-file" type="button" aria-label="Bỏ file đã chọn"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </div>
+
+        <button class="button button-primary button-wide" id="process-button" type="button" disabled>
+          <span>Chuyển thành văn bản</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+        </button>
+        <div class="progress-wrap" id="progress-wrap" hidden aria-live="polite">
+          <div class="progress-copy"><span>Đang phân tích người nói…</span><strong id="progress-value">0%</strong></div>
+          <div class="progress-track"><span id="progress-bar"></span></div>
+        </div>
+        <p class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 2.8 8.2 7 10 4.2-1.8 7-5.6 7-10V6l-7-3Z"/></svg> File của bạn không được dùng để huấn luyện mô hình.</p>
+      </div>
+    </section>
+
+    <section class="workspace-section" id="workspace" hidden>
+      <div class="section-heading">
+        <div><span class="step-label">Kết quả xử lý</span><h2 id="meeting-title">Cuộc họp tuần — Nhóm sản phẩm</h2></div>
+        <button class="button button-secondary" id="export-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M5 19h14"/></svg> Xuất bản ghi</button>
+      </div>
+      <div class="workspace-grid">
+        <aside class="meeting-summary">
+          <div class="audio-player">
+            <button class="play-button" id="play-button" type="button" aria-label="Phát bản ghi"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></svg></button>
+            <div class="waveform" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <span>12:48 / 34:20</span>
+          </div>
+          <div class="summary-block">
+            <span class="summary-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4m0 10v4M3 12h4m10 0h4M5.6 5.6l2.8 2.8m7.2 7.2 2.8 2.8m0-12.8-2.8 2.8m-7.2 7.2-2.8 2.8"/></svg></span>
+            <div><span class="step-label">Tóm tắt AI</span><p id="summary-text">Nhóm thống nhất ưu tiên thử nghiệm luồng tải file và cải thiện độ chính xác cho tiếng Việt trước khi mở rộng tính năng.</p></div>
+          </div>
+          <div class="insight-list">
+            <div><span class="dot dot-green"></span><span><strong>2 quyết định</strong><small>Đã được thống nhất</small></span></div>
+            <div><span class="dot dot-amber"></span><span><strong>3 công việc</strong><small>Cần theo dõi</small></span></div>
+            <div><span class="dot dot-blue"></span><span><strong id="speaker-count">3 người nói</strong><small>Đã phân biệt</small></span></div>
+          </div>
+        </aside>
+        <article class="transcript-panel">
+          <div class="transcript-tools">
+            <div class="tabs" role="tablist" aria-label="Nội dung cuộc họp">
+              <button class="tab active" id="transcript-tab" data-panel="transcript-panel" type="button" role="tab" aria-controls="transcript-panel" aria-selected="true">Bản ghi</button>
+              <button class="tab" id="tasks-tab" data-panel="tasks-panel" type="button" role="tab" aria-controls="tasks-panel" aria-selected="false">Công việc <span>3</span></button>
+            </div>
+            <button class="icon-button" id="search-button" type="button" aria-label="Tìm trong bản ghi" aria-expanded="false"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg></button>
+          </div>
+          <div class="search-panel" id="search-panel" hidden>
+            <label for="transcript-search">Tìm trong bản ghi</label>
+            <div><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg><input id="transcript-search" type="search" placeholder="Nhập từ khóa hoặc tên người nói…" autocomplete="off" /><button id="clear-search" type="button" aria-label="Xóa nội dung tìm kiếm">Xóa</button></div>
+            <small id="search-result" aria-live="polite">Nhập từ khóa để bắt đầu tìm kiếm.</small>
+          </div>
+          <div class="transcript-list" id="transcript-panel" role="tabpanel" aria-labelledby="transcript-tab">
+            <div class="utterance active-utterance">
+              <button class="speaker speaker-one" data-speaker="speaker-1" type="button" title="Đổi tên người nói" aria-label="Đổi tên Minh Long">ML</button>
+              <div><div class="utterance-meta"><strong data-speaker-name="speaker-1">Minh Long</strong><time>12:42</time></div><p>Tuần này chúng ta cần chốt trải nghiệm tải file. Mục tiêu là người dùng hiểu ngay hệ thống đang làm gì và còn phải chờ bao lâu.</p></div>
+            </div>
+            <div class="utterance">
+              <button class="speaker speaker-two" data-speaker="speaker-2" type="button" title="Đổi tên người nói" aria-label="Đổi tên Hà Anh">HA</button>
+              <div><div class="utterance-meta"><strong data-speaker-name="speaker-2">Hà Anh</strong><time>12:55</time></div><p>Em đã chuẩn bị ba trạng thái: đang tải lên, đang nhận dạng giọng nói và đang tạo bản tóm tắt. Mỗi trạng thái đều có tiến độ cụ thể.</p></div>
+            </div>
+            <div class="utterance">
+              <button class="speaker speaker-three" data-speaker="speaker-3" type="button" title="Đổi tên người nói" aria-label="Đổi tên Quang Nam">QN</button>
+              <div><div class="utterance-meta"><strong data-speaker-name="speaker-3">Quang Nam</strong><time>13:18</time></div><p>Phần phân biệt người nói nên cho phép đổi tên một lần và áp dụng cho toàn bộ cuộc họp. Đây là tính năng quan trọng nhất của bản đầu.</p></div>
+            </div>
+          </div>
+          <div class="tasks-panel" id="tasks-panel" role="tabpanel" aria-labelledby="tasks-tab" hidden>
+            <div class="task-item"><input id="task-1" type="checkbox" /><label for="task-1"><strong>Hoàn thiện luồng tải file</strong><span>Hà Anh · Hôm nay</span></label><span class="task-priority">Ưu tiên cao</span></div>
+            <div class="task-item"><input id="task-2" type="checkbox" /><label for="task-2"><strong>Kiểm thử nhận dạng tiếng Việt</strong><span>Quang Nam · Thứ sáu</span></label><span class="task-priority medium">Trung bình</span></div>
+            <div class="task-item"><input id="task-3" type="checkbox" /><label for="task-3"><strong>Chốt tiêu chí nghiệm thu MVP</strong><span>Minh Long · Tuần này</span></label><span class="task-priority medium">Trung bình</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="features" id="features">
+      <div class="section-intro"><span class="step-label">Từ âm thanh đến hành động</span><h2>Một nơi cho toàn bộ nội dung cuộc họp</h2><p>Không chỉ tạo văn bản. VoxNote giúp đội ngũ tìm lại ngữ cảnh và biết chính xác việc tiếp theo là gì.</p></div>
+      <div class="feature-grid">
+        <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 12h2l2-6 4 12 3-9 2 3h3"/></svg></span><h3>Nhận dạng chính xác</h3><p>Tối ưu cho tiếng Việt, giữ nguyên mốc thời gian và thuật ngữ quan trọng.</p></article>
+        <article><span class="feature-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2"/><path d="M3 20c0-4 2-6 6-6s6 2 6 6M15 15c3 0 5 2 5 5"/></svg></span><h3>Tách từng người nói</h3><p>Tự động phát hiện số người, gắn màu và cho phép xác nhận tên dễ dàng.</p></article>
+        <article><span class="feature-icon"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 9h8M8 13h5M8 17h7"/></svg></span><h3>Tóm tắt có căn cứ</h3><p>Quyết định và công việc luôn liên kết về đúng đoạn hội thoại gốc.</p></article>
+      </div>
+    </section>
+
+    <section class="workflow" id="workflow">
+      <div class="workflow-copy"><span class="step-label">Quy trình đơn giản</span><h2>Ba bước để không bỏ lỡ điều quan trọng</h2></div>
+      <ol>
+        <li><span>01</span><div><strong>Tải file lên</strong><p>Chọn audio hoặc video cuộc họp từ thiết bị.</p></div></li>
+        <li><span>02</span><div><strong>Kiểm tra người nói</strong><p>Đặt tên và chỉnh sửa những đoạn cần thiết.</p></div></li>
+        <li><span>03</span><div><strong>Chia sẻ kết quả</strong><p>Xuất bản ghi, tóm tắt và danh sách công việc.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="security" id="security">
+      <div><span class="step-label">Riêng tư từ thiết kế</span><h2>Cuộc họp thuộc về bạn.</h2><p>Mã hóa trong quá trình truyền và lưu trữ. Bạn có toàn quyền tải xuống hoặc xóa vĩnh viễn dữ liệu.</p></div>
+      <svg class="security-visual" viewBox="0 0 200 160" aria-hidden="true"><path d="M100 16 35 43v45c0 35 24 60 65 75 41-15 65-40 65-75V43L100 16Z"/><rect x="75" y="72" width="50" height="42" rx="8"/><path d="M85 72V60a15 15 0 0 1 30 0v12"/></svg>
+    </section>
+  </main>
+
+  <footer><a class="brand" href="#"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span><span>VoxNote</span></a><p>Biến cuộc trò chuyện thành tiến độ.</p><span>© 2026 VoxNote</span></footer>
+
+  <dialog class="rename-dialog" id="rename-dialog" aria-labelledby="rename-title">
+    <form method="dialog" id="rename-form">
+      <div class="dialog-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21c0-4 2.5-7 7-7s7 3 7 7"/></svg></div>
+      <h2 id="rename-title">Đổi tên người nói</h2>
+      <p>Tên mới sẽ được áp dụng cho mọi đoạn của người này.</p>
+      <label for="speaker-name-input">Tên người nói</label>
+      <input id="speaker-name-input" name="speakerName" maxlength="60" required />
+      <div class="dialog-actions"><button class="button button-ghost" value="cancel" type="button" id="cancel-rename">Hủy</button><button class="button button-primary" value="confirm" type="submit">Lưu tên</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
