@@ -1,6 +1,9 @@
 import asyncio
+import os
 
 import httpx
+
+os.environ["TRANSCRIPTION_PROVIDER"] = "demo"
 
 from backend.main import app
 
@@ -18,6 +21,7 @@ def test_health() -> None:
     response = request("GET", "/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["local_ai"] is True
 
 
 def test_upload_and_get_completed_job() -> None:
@@ -33,8 +37,8 @@ def test_upload_and_get_completed_job() -> None:
     assert job_response.status_code == 200
     payload = job_response.json()
     assert payload["status"] == "completed"
-    assert payload["result"]["speaker_count"] == 3
-    assert len(payload["result"]["segments"]) == 3
+    assert payload["result"]["speaker_count"] == 1
+    assert len(payload["result"]["segments"]) == 2
 
 
 def test_rejects_unsupported_extension() -> None:

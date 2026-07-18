@@ -11,7 +11,7 @@ const progressBar = document.querySelector('#progress-bar');
 const progressLabel = progressWrap.querySelector('.progress-copy span');
 const workspace = document.querySelector('#workspace');
 const toast = document.querySelector('#toast');
-const maxFileSize = 2 * 1024 * 1024 * 1024;
+const maxFileSize = 500 * 1024 * 1024;
 const allowedExtensions = ['mp3', 'wav', 'm4a', 'mp4', 'mov', 'webm', 'ogg'];
 let currentFile = null;
 let toastTimer;
@@ -32,7 +32,7 @@ function showToast(message) {
 function validateFile(file) {
   const extension = file.name.split('.').pop().toLowerCase();
   if (!allowedExtensions.includes(extension)) return 'Định dạng file chưa được hỗ trợ.';
-  if (file.size > maxFileSize) return 'File vượt quá giới hạn 2 GB.';
+  if (file.size > maxFileSize) return `File vượt quá giới hạn ${Math.round(maxFileSize / (1024 * 1024))} MB.`;
   return '';
 }
 
@@ -101,15 +101,32 @@ async function readApiError(response) {
 }
 
 async function pollJob(jobId) {
+  // GPU transcribe chạy nhiều phút — một request rớt mạng không được phép giết
+  // cả phiên xử lý. Chỉ bỏ cuộc khi lỗi liên tiếp kéo dài hoặc job thật sự failed.
+  let consecutiveFailures = 0;
   while (true) {
-    const response = await fetch(`${apiBase}/api/jobs/${jobId}`);
-    if (!response.ok) throw new Error(await readApiError(response));
-    const job = await response.json();
-    updateProgress(job);
+    try {
+      const response = await fetch(`${apiBase}/api/jobs/${jobId}`);
+      if (response.status === 404) {
+        throw Object.assign(new Error('Không tìm thấy tác vụ trên server.'), { fatal: true });
+      }
+      if (!response.ok) throw new Error(await readApiError(response));
+      consecutiveFailures = 0;
+      const job = await response.json();
+      updateProgress(job);
 
-    if (job.status === 'completed') return job;
-    if (job.status === 'failed') throw new Error(job.error || 'Backend không thể xử lý file.');
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
+      if (job.status === 'completed') return job;
+      if (job.status === 'failed') {
+        throw Object.assign(new Error(job.error || 'Backend không thể xử lý file.'), { fatal: true });
+      }
+    } catch (error) {
+      if (error.fatal) throw error;
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= 8) {
+        throw new Error('Mất kết nối tới backend. File có thể vẫn đang xử lý — thử tải lại trang sau.');
+      }
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, consecutiveFailures ? 1500 : 450));
   }
 }
 
@@ -128,7 +145,7 @@ processButton.addEventListener('click', async () => {
     const createdJob = await response.json();
     updateProgress(createdJob);
     const completedJob = await pollJob(createdJob.id);
-    renderJobResult(completedJob.result);
+    renderJobResult(completedJob);
     processButton.querySelector('span').textContent = 'Đã hoàn tất';
     workspace.hidden = false;
     showToast(`Đã xử lý file ở chế độ ${completedJob.mode}.`);
@@ -178,6 +195,25 @@ searchButton.addEventListener('click', () => {
   if (opening) searchInput.focus();
 });
 
+function highlightMatches(paragraph, source, query) {
+  // Dựng bằng DOM node thay vì innerHTML để nội dung transcript
+  // không bao giờ được parse thành HTML (chặn XSS qua text nhận dạng).
+  paragraph.replaceChildren();
+  const lowerSource = source.toLocaleLowerCase('vi');
+  const lowerQuery = query.toLocaleLowerCase('vi');
+  let cursor = 0;
+  while (lowerQuery.length) {
+    const found = lowerSource.indexOf(lowerQuery, cursor);
+    if (found === -1) break;
+    paragraph.append(source.slice(cursor, found));
+    const mark = document.createElement('mark');
+    mark.textContent = source.slice(found, found + query.length);
+    paragraph.append(mark);
+    cursor = found + query.length;
+  }
+  paragraph.append(source.slice(cursor));
+}
+
 function updateSearch() {
   const query = searchInput.value.trim();
   let matches = 0;
@@ -189,8 +225,7 @@ function updateSearch() {
     utterance.classList.toggle('search-hidden', !isMatch);
     paragraph.textContent = source;
     if (isMatch && query) {
-      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      paragraph.innerHTML = source.replace(new RegExp(escaped, 'giu'), '<mark>$&</mark>');
+      highlightMatches(paragraph, source, query);
       matches += 1;
     }
   });
@@ -246,11 +281,87 @@ function formatTimestamp(totalSeconds) {
   return `${minutes}:${seconds}`;
 }
 
-function renderJobResult(result) {
+function bindTaskCheckboxes() {
+  document.querySelectorAll('.task-item input').forEach((checkbox) => {
+    // Khóa lưu theo job id để trạng thái tick không "lây" từ cuộc họp này sang cuộc họp khác.
+    const storageKey = checkbox.dataset.storageKey || `voxnote-${checkbox.id}`;
+    try { checkbox.checked = localStorage.getItem(storageKey) === 'done'; } catch (error) { /* Continue without persistence. */ }
+    checkbox.addEventListener('change', () => {
+      try { localStorage.setItem(storageKey, checkbox.checked ? 'done' : 'open'); } catch (error) { /* Continue without persistence. */ }
+      showToast(checkbox.checked ? 'Đã đánh dấu công việc hoàn thành.' : 'Đã mở lại công việc.');
+    });
+  });
+}
+
+function renderDecisions(decisions) {
+  const list = document.querySelector('#decisions-list');
+  list.replaceChildren();
+  if (!decisions.length) {
+    const item = document.createElement('li');
+    item.textContent = 'Không phát hiện quyết định rõ ràng.';
+    list.append(item);
+    return;
+  }
+  decisions.forEach((decision) => {
+    const item = document.createElement('li');
+    item.textContent = decision;
+    list.append(item);
+  });
+}
+
+function renderTasks(tasks, jobId) {
+  const panel = document.querySelector('#tasks-panel');
+  panel.replaceChildren();
+  if (!tasks.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Không phát hiện công việc cần theo dõi.';
+    panel.append(empty);
+    return;
+  }
+
+  const priorityLabels = { high: 'Ưu tiên cao', medium: 'Trung bình', low: 'Ưu tiên thấp' };
+  tasks.forEach((task, index) => {
+    const id = `result-task-${index + 1}`;
+    const row = document.createElement('div');
+    row.className = 'task-item';
+    const checkbox = document.createElement('input');
+    checkbox.id = id;
+    checkbox.type = 'checkbox';
+    checkbox.dataset.storageKey = `voxnote-task-${jobId || 'phien-nay'}-${index + 1}`;
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    const title = document.createElement('strong');
+    title.textContent = task.text || 'Công việc chưa đặt tên';
+    const meta = document.createElement('span');
+    meta.textContent = `${task.assignee || 'Chưa rõ'} · ${task.due || 'Chưa rõ'}`;
+    label.append(title, meta);
+    const priority = document.createElement('span');
+    const level = ['high', 'medium', 'low'].includes(task.priority) ? task.priority : 'medium';
+    priority.className = `task-priority${level === 'high' ? '' : ` ${level}`}`;
+    priority.textContent = priorityLabels[level];
+    row.append(checkbox, label, priority);
+    panel.append(row);
+  });
+  bindTaskCheckboxes();
+}
+
+function renderJobResult(job) {
+  const result = job && job.result;
   if (!result) return;
   document.querySelector('#meeting-title').textContent = result.title || currentFile.name;
   document.querySelector('#summary-text').textContent = result.summary || 'Chưa có tóm tắt.';
   document.querySelector('#speaker-count').textContent = `${result.speaker_count || 0} người nói`;
+  document.querySelector('#speaker-status').textContent = (result.speaker_count || 0) > 1 ? 'Đã tách người nói' : 'Một kênh giọng nói';
+  document.querySelector('#audio-duration').textContent = `00:00 / ${formatTimestamp(result.duration_seconds || 0)}`;
+
+  const decisions = Array.isArray(result.decisions) ? result.decisions : [];
+  const tasks = Array.isArray(result.action_items) ? result.action_items : [];
+  document.querySelector('#decision-count').textContent = `${decisions.length} quyết định`;
+  document.querySelector('#task-count').textContent = `${tasks.length} công việc`;
+  document.querySelector('#task-tab-count').textContent = String(tasks.length);
+  renderDecisions(decisions);
+  renderTasks(tasks, job.id);
 
   const speakerMap = new Map((result.speakers || []).map((speaker) => [speaker.id, speaker]));
   const transcriptPanel = document.querySelector('#transcript-panel');
@@ -290,6 +401,13 @@ function renderJobResult(result) {
     transcriptPanel.append(utterance);
   });
 
+  if (!(result.segments || []).length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Không phát hiện lời nói trong file này.';
+    transcriptPanel.append(empty);
+  }
+
   prepareUtterances();
   bindSpeakerButtons();
   applySavedSpeakerNames();
@@ -299,6 +417,7 @@ function renderJobResult(result) {
 
 bindSpeakerButtons();
 applySavedSpeakerNames();
+bindTaskCheckboxes();
 
 cancelRename.addEventListener('click', () => renameDialog.close());
 renameForm.addEventListener('submit', (event) => {
@@ -325,14 +444,6 @@ playButton.addEventListener('click', () => {
   showToast(playing ? 'Đang phát bản ghi mẫu.' : 'Đã tạm dừng.');
 });
 
-document.querySelectorAll('.task-item input').forEach((checkbox) => {
-  try { checkbox.checked = localStorage.getItem(`voxnote-${checkbox.id}`) === 'done'; } catch (error) { /* Continue without persistence. */ }
-  checkbox.addEventListener('change', () => {
-    try { localStorage.setItem(`voxnote-${checkbox.id}`, checkbox.checked ? 'done' : 'open'); } catch (error) { /* Continue without persistence. */ }
-    showToast(checkbox.checked ? 'Đã đánh dấu công việc hoàn thành.' : 'Đã mở lại công việc.');
-  });
-});
-
 document.querySelector('#export-button').addEventListener('click', () => {
   const lines = utterances.map((utterance) => {
     const speaker = utterance.querySelector('[data-speaker-name]').textContent;
@@ -340,7 +451,7 @@ document.querySelector('#export-button').addEventListener('click', () => {
     const text = utterance.querySelector('p').dataset.original;
     return `[${time}] ${speaker}: ${text}`;
   });
-  const header = 'VoxNote — Cuộc họp tuần, Nhóm sản phẩm\n\n';
+  const header = `VoxNote — ${document.querySelector('#meeting-title').textContent}\n\n`;
   const blob = new Blob([header + lines.join('\n\n')], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');

@@ -1,0 +1,6 @@
+# Chạy GPU NVIDIA (LOCAL_ASR_DEVICE=cuda) trên Windows/Linux không có CUDA Toolkit
+# cài sẵn: hai wheel này cung cấp cuBLAS + cuDNN 9 cho CTranslate2.
+# Trên Windows, backend tự thêm thư mục DLL của chúng vào PATH lúc nạp model.
+-r requirements.txt
+nvidia-cublas-cu12>=12.0
+nvidia-cudnn-cu12>=9.0,<10.0
