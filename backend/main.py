@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
@@ -23,6 +25,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm", ".ogg"}
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "500")) * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
+JOB_RETENTION_SECONDS = float(os.getenv("JOB_RETENTION_HOURS", "24")) * 3600
+MAX_ACTIVE_JOBS = int(os.getenv("MAX_ACTIVE_JOBS", "10"))
 
 app = FastAPI(title="VoxNote API", version="0.1.0")
 app.add_middleware(
@@ -35,6 +39,37 @@ app.add_middleware(
 
 store = JobStore()
 transcriber = create_transcriber(os.getenv("TRANSCRIPTION_PROVIDER", "local"), PROJECT_ROOT)
+
+
+def unlink_quietly(path: Path) -> None:
+    """Windows không cho xóa file đang được job nền đọc — bỏ qua, sweep sau sẽ dọn."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def sweep_expired_data() -> None:
+    """Thi hành JOB_RETENTION_HOURS: dọn job đã xong + file upload quá hạn.
+
+    Quét thêm file mồ côi trong UPLOAD_DIR vì job store nằm trong RAM —
+    restart server là mất job nhưng file thì còn.
+    """
+    if JOB_RETENTION_SECONDS <= 0:
+        return
+    cutoff = datetime.now(UTC) - timedelta(seconds=JOB_RETENTION_SECONDS)
+    for stored_path in store.prune_finished_before(cutoff):
+        unlink_quietly(Path(stored_path))
+    cutoff_ts = time.time() - JOB_RETENTION_SECONDS
+    for path in UPLOAD_DIR.iterdir():
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff_ts:
+                path.unlink()
+        except OSError:
+            continue
+
+
+sweep_expired_data()
 
 
 def safe_extension(filename: str) -> str:
@@ -51,12 +86,18 @@ def clean_display_name(filename: str) -> str:
 
 
 @app.get("/api/health")
-def health() -> dict:
+async def health() -> dict:
     return {"status": "ok", **transcriber.describe()}
 
 
 @app.post("/api/jobs", status_code=202)
 async def create_job(background_tasks: BackgroundTasks, file: UploadFile = File(...)) -> dict:
+    sweep_expired_data()
+    if store.active_count() >= MAX_ACTIVE_JOBS:
+        raise HTTPException(
+            status_code=429,
+            detail="Hệ thống đang xử lý quá nhiều file. Vui lòng thử lại sau ít phút.",
+        )
     original_name = clean_display_name(file.filename or "meeting-audio")
     extension = safe_extension(original_name)
     job_id = uuid.uuid4().hex
@@ -89,7 +130,7 @@ async def create_job(background_tasks: BackgroundTasks, file: UploadFile = File(
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str) -> dict:
+async def get_job(job_id: str) -> dict:
     job = store.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Không tìm thấy tác vụ.")
@@ -97,11 +138,11 @@ def get_job(job_id: str) -> dict:
 
 
 @app.delete("/api/jobs/{job_id}", status_code=204)
-def delete_job(job_id: str) -> None:
+async def delete_job(job_id: str) -> None:
     job = store.delete(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Không tìm thấy tác vụ.")
-    Path(job["_stored_path"]).unlink(missing_ok=True)
+    unlink_quietly(Path(job["_stored_path"]))
 
 
 @app.get("/styles.css", include_in_schema=False)

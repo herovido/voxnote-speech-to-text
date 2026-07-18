@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,31 @@ from .local_analysis import (
 
 
 ProgressCallback = Callable[[int, str], None]
+
+VIETNAMESE_INITIAL_PROMPT = (
+    "Đây là bản ghi cuộc họp bằng tiếng Việt. "
+    "Giữ nguyên tên riêng, thuật ngữ kỹ thuật và dấu câu."
+)
+
+
+def _windows_cuda_dll_dirs() -> list[str]:
+    """Thư mục DLL cuBLAS/cuDNN do pip wheel nvidia-* cài kèm trong venv."""
+    root = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
+    return [str(root / name / "bin") for name in ("cublas", "cudnn") if (root / name / "bin").is_dir()]
+
+
+def _ensure_cuda_dlls_on_path() -> None:
+    """CTranslate2 trên Windows tìm cudnn/cublas DLL qua PATH lúc inference.
+
+    Nếu venv có wheel nvidia-cublas-cu12 / nvidia-cudnn-cu12 thì tự thêm vào PATH
+    để `uvicorn backend.main:app` chạy GPU được ngay, không cần chỉnh PATH thủ công.
+    """
+    if os.name != "nt":
+        return
+    current = os.environ.get("PATH", "")
+    missing = [d for d in _windows_cuda_dll_dirs() if d not in current]
+    if missing:
+        os.environ["PATH"] = os.pathsep.join(missing) + os.pathsep + current
 
 
 class Transcriber(Protocol):
@@ -88,7 +114,12 @@ class DemoTranscriber:
 
 @dataclass(slots=True)
 class LocalWhisperTranscriber:
-    """Run multilingual Whisper inference locally through faster-whisper."""
+    """Run multilingual Whisper inference locally through faster-whisper.
+
+    Khi `language` để trống, ngôn ngữ được nhận diện tự động; nếu ngôn ngữ đó có
+    model chuyên biệt trong `model_overrides` (vd Khmer — large-v3 rất yếu với km)
+    thì toàn bộ file được transcribe bằng model đó thay vì model chính.
+    """
 
     model_name: str
     device: str
@@ -97,8 +128,9 @@ class LocalWhisperTranscriber:
     download_root: Path
     local_files_only: bool
     analyzer: MeetingAnalyzer
+    model_overrides: dict[str, str] = field(default_factory=dict)
     mode: str = "local"
-    _model: Any = field(default=None, init=False, repr=False)
+    _models: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _model_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _inference_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
@@ -108,45 +140,77 @@ class LocalWhisperTranscriber:
             "local_ai": True,
             "asr_model": self.model_name,
             "asr_device": self.device,
+            "asr_model_overrides": dict(self.model_overrides),
             "analysis_provider": self.analyzer.name,
         }
 
-    def _load_model(self) -> Any:
+    def _load_model(self, model_name: str) -> Any:
         with self._model_lock:
-            if self._model is not None:
-                return self._model
+            model = self._models.get(model_name)
+            if model is not None:
+                return model
+            if self.device.startswith("cuda"):
+                _ensure_cuda_dlls_on_path()
             from faster_whisper import WhisperModel
 
             self.download_root.mkdir(parents=True, exist_ok=True)
-            self._model = WhisperModel(
-                self.model_name,
+            model = WhisperModel(
+                model_name,
                 device=self.device,
                 compute_type=self.compute_type,
                 download_root=str(self.download_root),
                 local_files_only=self.local_files_only,
             )
-            return self._model
+            self._models[model_name] = model
+            return model
+
+    @staticmethod
+    def _decode_audio(file_path: Path) -> Any:
+        from faster_whisper.audio import decode_audio
+
+        # detect_language yêu cầu MẢNG audio đã giải mã 16kHz, không nhận đường dẫn.
+        return decode_audio(str(file_path), sampling_rate=16000)
+
+    def _pick_model(self, file_path: Path, on_progress: ProgressCallback) -> tuple[Any, str | None, Any]:
+        """Chọn (model, ngôn ngữ ghim, audio đã giải mã nếu có)."""
+        language = self.language
+        model_name = self.model_name
+
+        if language:
+            model_name = self.model_overrides.get(language, model_name)
+            return self._load_model(model_name), language, None
+
+        on_progress(20, "Đang giải mã audio…")
+        audio = self._decode_audio(file_path)
+        on_progress(22, "Đang nhận diện ngôn ngữ trên máy…")
+        primary = self._load_model(model_name)
+        detected, _probability, _all = primary.detect_language(audio, vad_filter=True)
+        detected = str(detected or "").lower()
+        override = self.model_overrides.get(detected)
+        if override and override != model_name:
+            on_progress(
+                26,
+                f"Ngôn ngữ '{detected}' có mô hình chuyên biệt — chuyển sang {override}…",
+            )
+            return self._load_model(override), detected, audio
+        # Ghim ngôn ngữ đã nhận diện để Whisper không đổi ngôn ngữ giữa file.
+        return primary, (detected or None), audio
 
     def transcribe(self, file_path: Path, on_progress: ProgressCallback) -> dict:
-        on_progress(24, f"Đang nạp mô hình Whisper {self.model_name} trên {self.device.upper()}…")
-        model = self._load_model()
-        on_progress(32, "Đang nhận dạng giọng nói hoàn toàn trên máy…")
-
         with self._inference_lock:
+            model, language, audio = self._pick_model(file_path, on_progress)
+            on_progress(32, "Đang nhận dạng giọng nói hoàn toàn trên máy…")
             raw_segments, info = model.transcribe(
-                str(file_path),
-                language=self.language,
+                # Tái dùng audio đã giải mã ở bước nhận diện; numpy array phải so
+                # sánh bằng `is not None` (truthiness của array là ambiguous).
+                audio if audio is not None else str(file_path),
+                language=language,
                 beam_size=5,
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 500},
                 condition_on_previous_text=True,
                 word_timestamps=False,
-                initial_prompt=(
-                    "Đây là bản ghi cuộc họp bằng tiếng Việt. "
-                    "Giữ nguyên tên riêng, thuật ngữ kỹ thuật và dấu câu."
-                    if self.language == "vi"
-                    else None
-                ),
+                initial_prompt=VIETNAMESE_INITIAL_PROMPT if language == "vi" else None,
             )
             duration = max(float(getattr(info, "duration", 0) or 0), 0.0)
             segments: list[dict] = []
@@ -184,7 +248,7 @@ class LocalWhisperTranscriber:
         title = file_path.stem.replace("_", " ").replace("-", " ").strip().title() or "Cuộc họp mới"
         return {
             "title": title,
-            "language": str(getattr(info, "language", self.language or "unknown")),
+            "language": str(getattr(info, "language", language or "unknown")),
             "duration_seconds": round(duration),
             "speaker_count": 1 if segments else 0,
             "speakers": (
@@ -202,6 +266,23 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_model_overrides(raw: str) -> dict[str, str]:
+    """'km=PhanithLIM/whisper-tiny-khmer-ct2,ja=...' -> {'km': '...', 'ja': '...'}"""
+    overrides: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        language, separator, model = pair.partition("=")
+        if not separator or not language.strip() or not model.strip():
+            raise ValueError(
+                "LOCAL_ASR_MODEL_OVERRIDES phải có dạng 'lang=model[,lang2=model2]', "
+                f"gặp phần không hợp lệ: {pair!r}"
+            )
+        overrides[language.strip().lower()] = model.strip()
+    return overrides
 
 
 def _create_local_analyzer() -> MeetingAnalyzer:
@@ -227,14 +308,15 @@ def create_transcriber(provider: str, project_root: Path | None = None) -> Trans
         return DemoTranscriber()
     if normalized == "local":
         root = project_root or Path(__file__).resolve().parents[1]
-        language = os.getenv("LOCAL_ASR_LANGUAGE", "vi").strip() or None
+        language = os.getenv("LOCAL_ASR_LANGUAGE", "").strip() or None
         return LocalWhisperTranscriber(
-            model_name=os.getenv("LOCAL_ASR_MODEL", "large-v3-turbo"),
+            model_name=os.getenv("LOCAL_ASR_MODEL", "large-v3"),
             device=os.getenv("LOCAL_ASR_DEVICE", "cpu"),
             compute_type=os.getenv("LOCAL_ASR_COMPUTE_TYPE", "int8"),
             language=language,
             download_root=root / os.getenv("LOCAL_MODEL_DIR", "runtime/models"),
             local_files_only=_env_bool("LOCAL_MODELS_ONLY"),
             analyzer=_create_local_analyzer(),
+            model_overrides=parse_model_overrides(os.getenv("LOCAL_ASR_MODEL_OVERRIDES", "")),
         )
     raise ValueError("TRANSCRIPTION_PROVIDER chỉ hỗ trợ 'local' hoặc 'demo'.")

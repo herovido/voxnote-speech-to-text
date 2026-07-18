@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from .transcription import Transcriber
+
+logger = logging.getLogger("voxnote.jobs")
 
 
 class JobStore:
@@ -51,11 +54,37 @@ class JobStore:
         with self._lock:
             return self._jobs.pop(job_id, None)
 
+    def active_count(self) -> int:
+        with self._lock:
+            return sum(1 for job in self._jobs.values() if job["status"] in {"queued", "processing"})
+
+    def prune_finished_before(self, cutoff: datetime) -> list[str]:
+        """Xóa job đã xong/lỗi cũ hơn cutoff; trả về đường dẫn file để dọn."""
+        removed: list[str] = []
+        with self._lock:
+            for job_id, job in list(self._jobs.items()):
+                if job["status"] not in {"completed", "failed"}:
+                    continue
+                stamp = job.get("completed_at") or job["created_at"]
+                try:
+                    finished_at = datetime.fromisoformat(stamp)
+                except (TypeError, ValueError):
+                    continue
+                if finished_at < cutoff:
+                    removed.append(job["_stored_path"])
+                    del self._jobs[job_id]
+        return removed
+
     @staticmethod
     def public(job: dict[str, Any]) -> dict[str, Any]:
         result = deepcopy(job)
         result.pop("_stored_path", None)
         return result
+
+
+def _title_from_name(name: str) -> str:
+    stem = Path(name).stem.replace("_", " ").replace("-", " ").strip()
+    return stem.title() or "Cuộc họp mới"
 
 
 def process_job(job_id: str, store: JobStore, transcriber: Transcriber) -> None:
@@ -69,6 +98,8 @@ def process_job(job_id: str, store: JobStore, transcriber: Transcriber) -> None:
     try:
         report(18, "Đang kiểm tra và chuẩn hóa file…")
         result = transcriber.transcribe(Path(job["_stored_path"]), report)
+        # File trên đĩa mang tên job-id; tiêu đề phải lấy từ TÊN GỐC người dùng tải lên.
+        result["title"] = _title_from_name(job["original_name"])
         report(96, "Đang hoàn thiện bản ghi…")
         store.update(
             job_id,
@@ -78,12 +109,15 @@ def process_job(job_id: str, store: JobStore, transcriber: Transcriber) -> None:
             result=result,
             completed_at=datetime.now(UTC).isoformat(),
         )
-    except Exception as exc:  # The API must expose a recoverable state, not crash the worker.
+    except Exception:  # The API must expose a recoverable state, not crash the worker.
+        # Chi tiết lỗi (đường dẫn, stack trace nội bộ) chỉ ghi log server,
+        # không trả nguyên văn cho client.
+        logger.exception("Job %s xử lý thất bại", job_id)
         store.update(
             job_id,
             status="failed",
             stage="Không thể xử lý file",
-            error=str(exc),
+            error="Xử lý thất bại trên máy chủ. Hãy thử lại hoặc xem log server để biết chi tiết.",
             completed_at=datetime.now(UTC).isoformat(),
         )
 

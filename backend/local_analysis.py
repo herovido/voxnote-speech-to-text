@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Protocol
 from urllib.parse import urlsplit
 
 import httpx
+
+logger = logging.getLogger("voxnote.analysis")
 
 
 class MeetingAnalyzer(Protocol):
@@ -25,6 +28,14 @@ def _sentences(transcript: str) -> list[str]:
     return [part.strip() for part in re.split(r"(?<=[.!?…])\s+", compact) if part.strip()]
 
 
+_LINE_PREFIX = re.compile(r"^\[\d{1,3}:\d{2}\]\s*(?:Người nói \d+\s*:|Speaker \d+\s*:)?\s*")
+
+
+def _strip_speaker_prefixes(transcript: str) -> str:
+    """Bỏ tiền tố '[mm:ss] Người nói 1:' để summary/decision không dính rác timestamp."""
+    return "\n".join(_LINE_PREFIX.sub("", line) for line in transcript.splitlines())
+
+
 def _unique(items: list[str], limit: int) -> list[str]:
     seen: set[str] = set()
     output: list[str] = []
@@ -41,8 +52,9 @@ def _unique(items: list[str], limit: int) -> list[str]:
 
 def _extract_due(text: str) -> str | None:
     patterns = (
+        # "chủ nhật" phải đứng riêng (không ai nói "thứ chủ nhật"); "thứ 2..7" dạng số rất phổ biến.
         r"\b(?:trước|vào|đến|hạn(?: chót)?(?: là)?|deadline(?: là)?)\s+"
-        r"((?:thứ\s+(?:hai|ba|tư|năm|sáu|bảy|chủ nhật))|hôm nay|ngày mai|tuần này|tuần sau|"
+        r"((?:thứ\s+(?:hai|ba|tư|năm|sáu|bảy|[2-7]))|chủ\s+nhật|hôm nay|ngày mai|tuần này|tuần sau|"
         r"ngày\s+\d{1,2}(?:[./-]\d{1,2}(?:[./-]\d{2,4})?)?)",
         r"\b(?:before|by|on)\s+"
         r"(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|today|tomorrow|next week|"
@@ -62,7 +74,7 @@ class RuleBasedMeetingAnalyzer:
     name: str = "local-rules"
 
     def analyze(self, transcript: str) -> dict:
-        sentences = _sentences(transcript)
+        sentences = _sentences(_strip_speaker_prefixes(transcript))
         if not sentences:
             return {
                 "summary": "Không phát hiện nội dung lời nói rõ ràng trong file.",
@@ -72,8 +84,17 @@ class RuleBasedMeetingAnalyzer:
             }
 
         summary = " ".join(sentences[:3])
-        decision_terms = ("quyết định", "thống nhất", "chốt", "đồng ý", "sẽ triển khai")
-        action_terms = ("cần", "phải", "hãy", "giao cho", "deadline", "hoàn thành")
+        # Transcript có thể là bất kỳ ngôn ngữ nào Whisper nhận được — kèm từ khóa
+        # tiếng Anh để fallback không trả rỗng với cuộc họp không phải tiếng Việt.
+        decision_terms = (
+            "quyết định", "thống nhất", "chốt", "đồng ý", "sẽ triển khai",
+            "decided", "agreed", "approved", "final decision",
+        )
+        action_terms = (
+            "cần", "phải", "hãy", "giao cho", "deadline", "hoàn thành",
+            "need to", "needs to", "must", "should", "will", "assigned",
+            "finish", "complete", "follow up",
+        )
         decisions = _unique(
             [sentence for sentence in sentences if any(term in sentence.casefold() for term in decision_terms)],
             limit=5,
@@ -121,6 +142,16 @@ MEETING_SCHEMA = {
     },
     "required": ["summary", "decisions", "action_items"],
 }
+
+
+def _short_field(value: object, fallback: str) -> str:
+    """Người nhận / hạn chót là cụm NGẮN. Chuỗi dài bất thường hoặc nhiều dòng là
+    dấu hiệu model local trượt sang rác token (đã quan sát với qwen2.5:7b) —
+    trả fallback để _enrich suy lại từ chính bản ghi thay vì hiển thị rác."""
+    text = str(value or "").strip()
+    if not text or len(text) > 60 or "\n" in text:
+        return fallback
+    return text
 
 
 def _local_base_url(value: str) -> str:
@@ -188,7 +219,7 @@ class OllamaMeetingAnalyzer:
                 "prompt": prompt,
                 "stream": False,
                 "format": MEETING_SCHEMA,
-                "options": {"temperature": 0.1, "num_ctx": self.context_tokens},
+                "options": {"temperature": 0, "num_ctx": self.context_tokens},
                 "keep_alive": "10m",
             },
             timeout=self.timeout_seconds,
@@ -252,8 +283,8 @@ class OllamaMeetingAnalyzer:
                     {
                         "id": f"task-{index}",
                         "text": text,
-                        "assignee": str(item.get("assignee", "Chưa rõ")).strip()[:120] or "Chưa rõ",
-                        "due": str(item.get("due", "Chưa rõ")).strip()[:120] or "Chưa rõ",
+                        "assignee": _short_field(item.get("assignee"), "Chưa rõ"),
+                        "due": _short_field(item.get("due"), "Chưa rõ"),
                         "priority": priority,
                     }
                 )
@@ -286,7 +317,12 @@ class OllamaMeetingAnalyzer:
                     if len(action_words.intersection(word.casefold() for word in re.findall(r"\w+", line))) >= 2
                 ]
 
-            extracted = _extract_due(" ".join(candidates or lines))
+            # CHỈ suy hạn từ những dòng thực sự liên quan (khớp assignee hoặc từ khóa
+            # của công việc). Quét toàn bộ transcript sẽ gán bừa ngày của câu không
+            # liên quan vào công việc — tức là bịa deadline.
+            if not candidates:
+                continue
+            extracted = _extract_due(" ".join(candidates))
             if extracted:
                 action["due"] = extracted
         return result
@@ -307,6 +343,9 @@ class ResilientLocalAnalyzer:
         if self.primary is not None:
             try:
                 return self.primary.analyze(transcript)
-            except (httpx.HTTPError, json.JSONDecodeError, ValueError, OSError):
-                pass
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError, OSError) as exc:
+                # Fallback là hành vi đúng, nhưng lý do fail phải thấy được trong log
+                # server, không được nuốt im lặng.
+                logger.warning("Analyzer %s lỗi (%s: %s) — chuyển sang %s",
+                               self.primary.name, type(exc).__name__, exc, self.fallback.name)
         return self.fallback.analyze(transcript)
