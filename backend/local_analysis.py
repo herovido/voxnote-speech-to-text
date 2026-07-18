@@ -144,11 +144,28 @@ MEETING_SCHEMA = {
 }
 
 
-def _short_field(value: object, fallback: str) -> str:
-    """Người nhận / hạn chót là cụm NGẮN. Chuỗi dài bất thường hoặc nhiều dòng là
-    dấu hiệu model local trượt sang rác token (đã quan sát với qwen2.5:7b) —
-    trả fallback để _enrich suy lại từ chính bản ghi thay vì hiển thị rác."""
+_CJK = re.compile(r"[一-鿿぀-ヿ가-힯（）、。]")
+
+
+def _strip_cjk_tail(text: str, allow_cjk: bool) -> str:
+    """qwen2.5:7b thỉnh thoảng trượt sang tiếng Trung GIỮA một trường đang viết dở
+    (quan sát nhiều lần, kể cả temperature 0). Cuộc họp không có chữ CJK mà output
+    có CJK = rác chắc chắn — cắt từ ký tự CJK đầu tiên."""
+    if allow_cjk:
+        return text
+    match = _CJK.search(text)
+    return text[: match.start()].strip() if match else text
+
+
+def _short_field(value: object, fallback: str, allow_cjk: bool = True) -> str:
+    """Người nhận / hạn chót là cụm NGẮN. Chuỗi dài bất thường, nhiều dòng, hoặc
+    lẫn CJK không có trong bản ghi là dấu hiệu model local trượt sang rác token —
+    trả fallback để _enrich suy lại từ chính bản ghi thay vì hiển thị rác.
+    Field ngắn dính CJK lạ thì bỏ CẢ giá trị (prefix trước điểm trượt thường cụt
+    giữa từ, vd "Trước thứ sá"), không cắt-giữ như action text."""
     text = str(value or "").strip()
+    if _strip_cjk_tail(text, allow_cjk) != text:
+        return fallback
     if not text or len(text) > 60 or "\n" in text:
         return fallback
     return text
@@ -229,7 +246,7 @@ class OllamaMeetingAnalyzer:
         generated = body.get("response")
         if not isinstance(generated, str):
             raise ValueError("Ollama không trả về trường response hợp lệ.")
-        return self._enrich(self._normalize(json.loads(generated)), evidence_text)
+        return self._enrich(self._normalize(json.loads(generated), evidence_text), evidence_text)
 
     def _chunks(self, transcript: str) -> list[str]:
         lines = [line.strip() for line in transcript.splitlines() if line.strip()]
@@ -251,17 +268,24 @@ class OllamaMeetingAnalyzer:
             chunks.append("\n".join(current))
         return chunks
 
-    def _normalize(self, payload: object) -> dict:
+    def _normalize(self, payload: object, evidence_text: str = "") -> dict:
         if not isinstance(payload, dict):
             raise ValueError("Kết quả Ollama không phải JSON object.")
 
-        summary = str(payload.get("summary", "")).strip()[:2_000]
+        # Bản ghi không có chữ CJK mà output lẫn CJK = model trượt rác giữa chừng.
+        allow_cjk = bool(_CJK.search(evidence_text))
+
+        summary = _strip_cjk_tail(str(payload.get("summary", "")).strip(), allow_cjk)[:2_000]
         if not summary:
             raise ValueError("Ollama không tạo được nội dung tóm tắt.")
 
         raw_decisions = payload.get("decisions", [])
         decisions = _unique(
-            [str(item).strip()[:500] for item in raw_decisions if str(item).strip()]
+            [
+                _strip_cjk_tail(str(item).strip(), allow_cjk)[:500]
+                for item in raw_decisions
+                if _strip_cjk_tail(str(item).strip(), allow_cjk)
+            ]
             if isinstance(raw_decisions, list)
             else [],
             limit=8,
@@ -273,7 +297,7 @@ class OllamaMeetingAnalyzer:
             for index, item in enumerate(raw_actions[:12], start=1):
                 if not isinstance(item, dict):
                     continue
-                text = str(item.get("text", "")).strip()[:500]
+                text = _strip_cjk_tail(str(item.get("text", "")).strip(), allow_cjk)[:500]
                 if not text:
                     continue
                 priority = str(item.get("priority", "medium")).lower()
@@ -283,8 +307,8 @@ class OllamaMeetingAnalyzer:
                     {
                         "id": f"task-{index}",
                         "text": text,
-                        "assignee": _short_field(item.get("assignee"), "Chưa rõ"),
-                        "due": _short_field(item.get("due"), "Chưa rõ"),
+                        "assignee": _short_field(item.get("assignee"), "Chưa rõ", allow_cjk),
+                        "due": _short_field(item.get("due"), "Chưa rõ", allow_cjk),
                         "priority": priority,
                     }
                 )

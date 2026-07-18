@@ -6,9 +6,10 @@ VoxNote chuyển audio/video thành bản ghi và phân tích nội dung bằng 
 
 1. `faster-whisper` nhận diện ngôn ngữ của file (khi `LOCAL_ASR_LANGUAGE` để trống), ghim ngôn ngữ đó cho cả file.
 2. Nếu ngôn ngữ có model chuyên biệt trong `LOCAL_ASR_MODEL_OVERRIDES` (mặc định: Khmer), toàn bộ file được transcribe bằng model đó; ngược lại dùng model chính (`large-v3`).
-3. Transcript dài được chia thành các đoạn có timestamp.
-4. Ollama local (`qwen2.5:7b`) tóm tắt, trích xuất quyết định và công việc; kết quả từng đoạn được tổng hợp thêm một lượt để giữ context toàn cuộc họp.
-5. Nếu Ollama chưa chạy, hệ thống tự chuyển sang bộ phân tích rule-based offline (hỗ trợ từ khóa tiếng Việt + tiếng Anh); transcript vẫn hoạt động.
+3. **Diarization** (sherpa-onnx: pyannote segmentation-3.0 ONNX + embedding CAM++ 3D-Speaker, chạy CPU) tách lượt nói theo người; mỗi đoạn transcript được gán "Người nói N" theo overlap thời gian, đánh số theo thứ tự xuất hiện.
+4. Transcript dài được chia thành các đoạn có timestamp kèm tên người nói.
+5. Ollama local (`qwen2.5:7b`) tóm tắt, trích xuất quyết định và công việc; kết quả từng đoạn được tổng hợp thêm một lượt để giữ context toàn cuộc họp.
+6. Nếu Ollama chưa chạy, hệ thống tự chuyển sang bộ phân tích rule-based offline (hỗ trợ từ khóa tiếng Việt + tiếng Anh); nếu diarization lỗi, lùi về một người nói — transcript không bao giờ chết vì tầng phân tích.
 
 `OLLAMA_BASE_URL` bị giới hạn trong code ở `127.0.0.1`, `localhost` hoặc `::1`. Cấu hình URL bên ngoài sẽ bị từ chối khi khởi động.
 
@@ -34,7 +35,7 @@ VoxNote chuyển audio/video thành bản ghi và phân tích nội dung bằng 
 - Tìm kiếm transcript (highlight không dùng innerHTML — an toàn XSS), đổi tên người nói, đánh dấu công việc theo từng cuộc họp, xuất TXT.
 - Job đã xong + file upload tự dọn sau `JOB_RETENTION_HOURS` (mặc định 24h); chặn quá tải bằng `MAX_ACTIVE_JOBS`.
 - Job vẫn lưu trong RAM (restart là mất); file mồ côi sau restart được sweep dọn.
-- Bản hiện tại chưa diarization: tất cả nội dung được gom vào `Người nói 1`. Tách nhiều người nói là bước tiếp theo.
+- Diarization local: tự phát hiện số người nói (`DIARIZATION_NUM_SPEAKERS=-1`) hoặc ghim số người biết trước; model ~34MB tự tải từ GitHub k2-fsa lần đầu, không cần PyTorch/HF token.
 - Chưa kiểm tra nội dung codec trước khi decode — chỉ chặn theo đuôi file và dung lượng (đủ cho dùng local, chưa đủ nếu mở ra Internet).
 
 ## Yêu cầu
@@ -87,6 +88,7 @@ Test API dùng provider demo cố định để không tải model. `tests/test_
 ## Cấu trúc
 
 - `backend/transcription.py`: adapter demo + faster-whisper local, routing model theo ngôn ngữ, tự nạp DLL CUDA trên Windows.
+- `backend/diarization.py`: tách người nói sherpa-onnx (tự tải model), gán speaker cho segment theo overlap.
 - `backend/local_analysis.py`: Ollama local, hierarchical summary, guard chống rác/bịa, offline fallback đa ngôn ngữ.
 - `backend/jobs.py`: job store trong RAM, xử lý nền, prune theo retention.
 - `backend/main.py`: FastAPI upload/job API, retention sweep, giới hạn hàng đợi, frontend tĩnh.

@@ -197,6 +197,45 @@ def test_normalize_drops_abnormally_long_short_fields() -> None:
     assert result["action_items"][0]["due"] == "Chưa rõ"
 
 
+def test_normalize_scrubs_cjk_garbage_when_meeting_has_none() -> None:
+    analyzer = OllamaMeetingAnalyzer()
+    payload = {
+        "summary": "Tóm tắt hợp lệ.",
+        "decisions": ["Dùng mô hình local"],
+        "action_items": [
+            {
+                "text": "Chuẩn bị demo trước thứ sá六大模型无法直接翻译或生成诗歌",
+                "assignee": "Nam",
+                "due": "Trước thứ sá六, 08:00:00 2023（周五）",
+                "priority": "high",
+            }
+        ],
+    }
+
+    result = analyzer._normalize(payload, "Tôi sẽ chuẩn bị bản demo trước thứ sáu.")
+
+    item = result["action_items"][0]
+    assert item["text"] == "Chuẩn bị demo trước thứ sá"  # text dài: cắt đuôi giữ phần hợp lệ
+    assert item["due"] == "Chưa rõ"  # field ngắn dính CJK lạ: bỏ hẳn, để _enrich suy lại
+    assert item["assignee"] == "Nam"
+
+
+def test_normalize_keeps_cjk_for_chinese_meetings() -> None:
+    analyzer = OllamaMeetingAnalyzer()
+    payload = {
+        "summary": "会议总结。",
+        "decisions": [],
+        "action_items": [
+            {"text": "准备演示", "assignee": "小明", "due": "周五", "priority": "high"}
+        ],
+    }
+
+    result = analyzer._normalize(payload, "小明说：我周五之前准备演示。")
+
+    assert result["summary"] == "会议总结。"
+    assert result["action_items"][0]["due"] == "周五"
+
+
 def test_rule_based_handles_english_and_strips_timestamps() -> None:
     transcript = (
         "[00:00] Người nói 1: We decided to launch the beta on Friday.\n"

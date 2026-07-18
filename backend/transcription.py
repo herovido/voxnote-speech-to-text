@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import sys
@@ -8,12 +9,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from .diarization import (
+    NoopDiarizer,
+    SherpaOnnxDiarizer,
+    SpeakerDiarizer,
+    assign_speakers,
+)
 from .local_analysis import (
     MeetingAnalyzer,
     OllamaMeetingAnalyzer,
     ResilientLocalAnalyzer,
     RuleBasedMeetingAnalyzer,
 )
+
+logger = logging.getLogger("voxnote.transcription")
 
 
 ProgressCallback = Callable[[int, str], None]
@@ -129,6 +138,7 @@ class LocalWhisperTranscriber:
     local_files_only: bool
     analyzer: MeetingAnalyzer
     model_overrides: dict[str, str] = field(default_factory=dict)
+    diarizer: SpeakerDiarizer = field(default_factory=NoopDiarizer)
     mode: str = "local"
     _models: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _model_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
@@ -142,6 +152,7 @@ class LocalWhisperTranscriber:
             "asr_device": self.device,
             "asr_model_overrides": dict(self.model_overrides),
             "analysis_provider": self.analyzer.name,
+            "diarization_provider": self.diarizer.name,
         }
 
     def _load_model(self, model_name: str) -> Any:
@@ -235,11 +246,24 @@ class LocalWhisperTranscriber:
                     progress = 32 + int(min(end / duration, 1.0) * 45)
                     on_progress(progress, "Đang nhận dạng giọng nói hoàn toàn trên máy…")
 
+            turns = []
+            if segments:
+                on_progress(78, "Đang tách người nói trên máy…")
+                try:
+                    if audio is None:
+                        audio = self._decode_audio(file_path)
+                    turns = self.diarizer.diarize(audio)
+                except Exception:
+                    # Diarization hỏng không được phép giết job — lùi về một người nói.
+                    logger.exception("Diarization lỗi — dùng chế độ một người nói")
+
         if segments and duration <= 0:
             duration = float(segments[-1]["end_seconds"])
+        segments, speakers = assign_speakers(segments, turns)
+        speaker_names = {speaker["id"]: speaker["name"] for speaker in speakers}
         transcript = "\n".join(
             f"[{int(segment['start_seconds']) // 60:02d}:{int(segment['start_seconds']) % 60:02d}] "
-            f"Người nói 1: {segment['text']}"
+            f"{speaker_names.get(segment['speaker_id'], 'Người nói 1')}: {segment['text']}"
             for segment in segments
         )
         on_progress(82, "Đang tóm tắt bằng Local AI…")
@@ -250,12 +274,8 @@ class LocalWhisperTranscriber:
             "title": title,
             "language": str(getattr(info, "language", language or "unknown")),
             "duration_seconds": round(duration),
-            "speaker_count": 1 if segments else 0,
-            "speakers": (
-                [{"id": "speaker-1", "name": "Người nói 1", "initials": "N1", "color": "speaker-one"}]
-                if segments
-                else []
-            ),
+            "speaker_count": len(speakers),
+            "speakers": speakers,
             "segments": segments,
             **analysis,
         }
@@ -283,6 +303,20 @@ def parse_model_overrides(raw: str) -> dict[str, str]:
             )
         overrides[language.strip().lower()] = model.strip()
     return overrides
+
+
+def _create_diarizer(root: Path) -> SpeakerDiarizer:
+    provider = os.getenv("DIARIZATION_PROVIDER", "sherpa").strip().lower()
+    if provider in {"none", "off"}:
+        return NoopDiarizer()
+    if provider == "sherpa":
+        return SherpaOnnxDiarizer(
+            model_dir=root / os.getenv("DIARIZATION_MODEL_DIR", "runtime/models/diarization"),
+            threshold=float(os.getenv("DIARIZATION_THRESHOLD", "0.5")),
+            num_speakers=int(os.getenv("DIARIZATION_NUM_SPEAKERS", "-1")),
+            auto_download=not _env_bool("LOCAL_MODELS_ONLY"),
+        )
+    raise ValueError("DIARIZATION_PROVIDER chỉ hỗ trợ 'sherpa' hoặc 'none'.")
 
 
 def _create_local_analyzer() -> MeetingAnalyzer:
@@ -318,5 +352,6 @@ def create_transcriber(provider: str, project_root: Path | None = None) -> Trans
             local_files_only=_env_bool("LOCAL_MODELS_ONLY"),
             analyzer=_create_local_analyzer(),
             model_overrides=parse_model_overrides(os.getenv("LOCAL_ASR_MODEL_OVERRIDES", "")),
+            diarizer=_create_diarizer(root),
         )
     raise ValueError("TRANSCRIPTION_PROVIDER chỉ hỗ trợ 'local' hoặc 'demo'.")
